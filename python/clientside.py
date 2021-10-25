@@ -18,6 +18,7 @@ dead_serverside_conn_ids = set()  # : set[int]
 
 
 def sync_with_db():
+    print(f"db synchronizing. to: {list(data_to_db.keys())}")
     global data_from_db, min_noninserted_conn_id, next_chunk_ids, dead_serverside_conn_ids
     lock.acquire()
     try:
@@ -80,7 +81,6 @@ def sync_with_db():
             print(
                 f"db synchronized. "
                 f"from: {list(data_from_db.keys())}, "
-                f"to: {list(data_to_db.keys())}, "
                 f"conns: {next_chunk_ids}, "
                 f"dead_svr_conns: {list(dead_serverside_conn_ids)}"
             )
