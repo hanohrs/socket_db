@@ -4,7 +4,6 @@ import sqlite3
 
 from constants import DBNAME
 
-
 con = sqlite3.connect(DBNAME)
 cur = con.cursor()
 cur.execute("DROP TABLE IF EXISTS data")

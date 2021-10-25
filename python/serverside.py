@@ -8,7 +8,6 @@ import traceback
 
 from constants import *
 
-
 lock = threading.Lock()
 data_from_db = {}  # : dict[int, tuple[bool, bytes]]
 data_to_db = {}  # : dict[int, tuple[bool, bytes]]
@@ -70,56 +69,60 @@ def sync_with_db():
                 print(f"Rolling back. {e}")
                 print(traceback.format_exc())
                 con.rollback()
-            print(f"db synchronized. {data_from_db.keys()}, {data_to_db.keys()}, {next_chunk_ids}")
+            print(f"db synchronized. from: {list(data_from_db.keys())}, to: {list(data_to_db.keys())}, conns: {next_chunk_ids}")
     finally:
         lock.release()
 
 
 def handle_connection(conn_id):
     print(f"connection {conn_id} started")
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect(SERVER_ADDRESS)
-        sending = True
-        receiving = True
-        while sending or receiving:
-            if sending:  # to the server
-                lock.acquire()
-                data_from_db_pair = data_from_db.get(conn_id)
-                if data_from_db_pair:
-                    del data_from_db[conn_id]
-                lock.release()
-                if data_from_db_pair:
-                    down, data = data_from_db_pair
-                    if data:
-                        s.sendall(data)
-                    if down:
-                        sending = False
-            if receiving:  # receive from the server
-                s.setblocking(False)
-                try:
-                    chunk = s.recv(BUFSIZE)
-                except BlockingIOError:
-                    continue
-                else:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect(SERVER_ADDRESS)
+            sending = True
+            receiving = True
+            while sending or receiving:
+                if sending:  # to the server
                     lock.acquire()
-                    down, data = data_to_db.get(conn_id, (False, b""))
-                    data_to_db[conn_id] = down or not chunk, data + chunk
-                    if not chunk:
-                        receiving = False
+                    data_from_db_pair = data_from_db.get(conn_id)
+                    if data_from_db_pair:
+                        del data_from_db[conn_id]
                     lock.release()
-                finally:
-                    s.setblocking(True)
-            lock.acquire()
-            alive = conn_id in next_chunk_ids.keys()
-            lock.release()
-            if not alive:
-                break
-            time.sleep(SLEEP_TIME)
-    lock.acquire()
-    if conn_id in next_chunk_ids:
-        del next_chunk_ids[conn_id]
-    lock.release()
-    print(f"connection {conn_id} closed")
+                    if data_from_db_pair:
+                        down, data = data_from_db_pair
+                        if data:
+                            s.sendall(data)
+                        if down:
+                            sending = False
+                if receiving:  # receive from the server
+                    s.setblocking(False)
+                    try:
+                        chunk = s.recv(BUFSIZE)
+                    except BlockingIOError:
+                        continue
+                    else:
+                        lock.acquire()
+                        down, data = data_to_db.get(conn_id, (False, b""))
+                        data_to_db[conn_id] = down or not chunk, data + chunk
+                        if not chunk:
+                            receiving = False
+                        lock.release()
+                    finally:
+                        s.setblocking(True)
+                lock.acquire()
+                alive = conn_id in next_chunk_ids.keys()
+                lock.release()
+                if not alive:
+                    break
+                time.sleep(SLEEP_TIME)
+    finally:
+        lock.acquire()
+        if conn_id in next_chunk_ids:
+            del next_chunk_ids[conn_id]
+        if conn_id in data_from_db:
+            del data_from_db[conn_id]
+        lock.release()
+        print(f"connection {conn_id} closed")
 
 
 def main():
