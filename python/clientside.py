@@ -14,10 +14,11 @@ next_conn_id = SEQ_MIN_VALUE
 data_from_db = {}  # : dict[int, tuple[bool, bytes]]
 data_to_db = {}  # : dict[int, tuple[bool, bytes]]
 next_chunk_ids = {}  # : dict[int, int]
+dead_serverside_conn_ids = set()  # : set[int]
 
 
 def sync_with_db():
-    global data_from_db, min_noninserted_conn_id, next_chunk_ids
+    global data_from_db, min_noninserted_conn_id, next_chunk_ids, dead_serverside_conn_ids
     lock.acquire()
     try:
         with sqlite3.connect(DBNAME, DB_TIMEOUT) as con:
@@ -37,7 +38,8 @@ def sync_with_db():
                     down, data = new_data_from_db.get(conn_id, (False, b""))
                     down = down or not chunk_data
                     data = data + chunk_data
-                    new_data_from_db[conn_id] = down, data
+                    if conn_id in next_chunk_ids:
+                        new_data_from_db[conn_id] = down, data
                     keys_of_data.append((conn_id, DIRECTION_TO_CLIENT, chunk_id))
                 cur.executemany("DELETE FROM data WHERE conn_id = ? AND direction = ? AND chunk_id = ?", keys_of_data)
                 # data to db
@@ -49,15 +51,20 @@ def sync_with_db():
                     cur.executemany("INSERT INTO data VALUES (?, ?, ?, ?)", params)
                     new_next_chunk_ids[conn_id] = next_chunk_id + len(params)
                 # conn_ids
-                db_conn_ids = set(map(lambda t: t[0], cur.execute("SELECT conn_id FROM conn_ids")))
-                for conn_id in list(new_next_chunk_ids):
-                    if conn_id < min_noninserted_conn_id and conn_id not in db_conn_ids:
-                        del new_next_chunk_ids[conn_id]
-                cur.execute("DELETE FROM conn_ids")
-                cur.executemany(
-                    "INSERT INTO conn_ids VALUES (?)",
-                    map(lambda conn_id: (conn_id,), new_next_chunk_ids.keys())
-                )
+                new_dead_serverside_conn_ids = \
+                    dead_serverside_conn_ids | \
+                    set(map(lambda t: t[0], cur.execute("SELECT conn_id FROM dead_serverside_conn_ids"))) & \
+                    next_chunk_ids.keys()
+                if new_dead_serverside_conn_ids != dead_serverside_conn_ids:
+                    cur.execute("DELETE FROM dead_serverside_conn_ids")
+                db_clientside_conn_ids = \
+                    set(map(lambda t: t[0], cur.execute("SELECT conn_id FROM clientside_conn_ids")))
+                if next_chunk_ids.keys() != db_clientside_conn_ids:
+                    cur.execute("DELETE FROM clientside_conn_ids")
+                    cur.executemany(
+                        "INSERT INTO clientside_conn_ids VALUES (?)",
+                        map(lambda i: (i,), next_chunk_ids.keys())
+                    )
                 # commit
                 con.commit()
                 # update cache
@@ -65,11 +72,18 @@ def sync_with_db():
                 data_from_db = new_data_from_db
                 data_to_db.clear()
                 next_chunk_ids = new_next_chunk_ids
+                dead_serverside_conn_ids = new_dead_serverside_conn_ids
             except Exception as e:  # sqlite3.Error:
                 print(f"Rolling back. {e}")
                 print(traceback.format_exc())
                 con.rollback()
-            print(f"db synchronized. from: {list(data_from_db.keys())}, to: {list(data_to_db.keys())}, conns: {next_chunk_ids}")
+            print(
+                f"db synchronized. "
+                f"from: {list(data_from_db.keys())}, "
+                f"to: {list(data_to_db.keys())}, "
+                f"conns: {next_chunk_ids}, "
+                f"dead_svr_conns: {list(dead_serverside_conn_ids)}"
+            )
     finally:
         lock.release()
 
@@ -111,7 +125,9 @@ def handle_client_socket(client_socket: socket.socket):
                         if data:
                             s.sendall(data)
                         if down:
+                            s.shutdown(socket.SHUT_WR)
                             sending = False
+                            print(f"connection {conn_id} write shutdown")
                 if receiving:  # from the client
                     s.setblocking(False)
                     try:
@@ -124,11 +140,12 @@ def handle_client_socket(client_socket: socket.socket):
                         data_to_db[conn_id] = down or not chunk, data + chunk
                         if not chunk:
                             receiving = False
+                            print(f"connection {conn_id} read shutdown")
                         lock.release()
                     finally:
                         s.setblocking(True)
                 lock.acquire()
-                alive = conn_id in next_chunk_ids.keys()
+                alive = conn_id not in dead_serverside_conn_ids
                 lock.release()
                 if not alive:
                     break
@@ -139,8 +156,9 @@ def handle_client_socket(client_socket: socket.socket):
             del next_chunk_ids[conn_id]
         if conn_id in data_from_db:
             del data_from_db[conn_id]
+        dead_serverside_conn_ids.discard(conn_id)
         lock.release()
-        print(f"connection {conn_id} closed")
+        print(f"connection {conn_id} closed: {next_chunk_ids}")
 
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

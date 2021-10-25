@@ -7,7 +7,8 @@ from constants import DBNAME
 con = sqlite3.connect(DBNAME)
 cur = con.cursor()
 cur.execute("DROP TABLE IF EXISTS data")
-cur.execute("DROP TABLE IF EXISTS conn_ids")
+cur.execute("DROP TABLE IF EXISTS dead_serverside_conn_ids")
+cur.execute("DROP TABLE IF EXISTS clientside_conn_ids")
 cur.execute("DROP TABLE IF EXISTS directions")
 cur.execute("""\
     CREATE TABLE directions (
@@ -16,7 +17,12 @@ cur.execute("""\
     )
 """)
 cur.execute("""\
-    CREATE TABLE conn_ids (
+    CREATE TABLE clientside_conn_ids (
+        conn_id int PRIMARY KEY
+    )
+""")
+cur.execute("""\
+    CREATE TABLE dead_serverside_conn_ids (
         conn_id int PRIMARY KEY
     )
 """)
