@@ -6,6 +6,7 @@ from constants import DBNAME
 
 con = sqlite3.connect(DBNAME)
 cur = con.cursor()
+cur.execute("PRAGMA journal_mode=WAL")
 cur.execute("DROP TABLE IF EXISTS data")
 cur.execute("DROP TABLE IF EXISTS dead_serverside_conn_ids")
 cur.execute("DROP TABLE IF EXISTS clientside_conn_ids")
