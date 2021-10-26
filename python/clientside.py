@@ -52,12 +52,17 @@ def sync_with_db():
                     cur.executemany("INSERT INTO data VALUES (?, ?, ?, ?)", params)
                     new_next_chunk_ids[conn_id] = next_chunk_id + len(params)
                 # conn_ids
+                db_dead_serverside_conn_ids = \
+                    set(map(lambda t: t[0], cur.execute("SELECT conn_id FROM dead_serverside_conn_ids")))
                 new_dead_serverside_conn_ids = \
-                    dead_serverside_conn_ids | \
-                    set(map(lambda t: t[0], cur.execute("SELECT conn_id FROM dead_serverside_conn_ids"))) & \
-                    next_chunk_ids.keys()
-                if new_dead_serverside_conn_ids != dead_serverside_conn_ids:
+                    next_chunk_ids.keys() & \
+                    (dead_serverside_conn_ids | (db_dead_serverside_conn_ids - dead_serverside_conn_ids))
+                if new_dead_serverside_conn_ids != db_dead_serverside_conn_ids:
                     cur.execute("DELETE FROM dead_serverside_conn_ids")
+                    cur.executemany(
+                        "INSERT INTO dead_serverside_conn_ids VALUES (?)",
+                        map(lambda i: (i,), new_dead_serverside_conn_ids)
+                    )
                 db_clientside_conn_ids = \
                     set(map(lambda t: t[0], cur.execute("SELECT conn_id FROM clientside_conn_ids")))
                 if next_chunk_ids.keys() != db_clientside_conn_ids:
@@ -115,6 +120,7 @@ def handle_client_socket(client_socket: socket.socket):
             receiving = True
             while sending or receiving:
                 if sending:  # to the client
+                    # print(f"connection {conn_id} writing")
                     lock.acquire()
                     data_from_db_pair = data_from_db.get(conn_id)
                     if data_from_db_pair:
@@ -129,11 +135,12 @@ def handle_client_socket(client_socket: socket.socket):
                             sending = False
                             print(f"connection {conn_id} write shutdown")
                 if receiving:  # from the client
+                    # print(f"connection {conn_id} reading")
                     s.setblocking(False)
                     try:
                         chunk = s.recv(BUFSIZE)
                     except BlockingIOError:
-                        continue
+                        pass
                     else:
                         lock.acquire()
                         down, data = data_to_db.get(conn_id, (False, b""))
@@ -147,7 +154,9 @@ def handle_client_socket(client_socket: socket.socket):
                 lock.acquire()
                 alive = conn_id not in dead_serverside_conn_ids
                 lock.release()
+                # print(f"connection {conn_id} is alive: {alive}")
                 if not alive:
+                    print(f"connection {conn_id} is dead on the server side")
                     break
                 time.sleep(SLEEP_TIME)
     finally:
@@ -156,7 +165,8 @@ def handle_client_socket(client_socket: socket.socket):
             del next_chunk_ids[conn_id]
         if conn_id in data_from_db:
             del data_from_db[conn_id]
-        dead_serverside_conn_ids.discard(conn_id)
+        if conn_id in data_to_db:
+            del data_to_db[conn_id]
         lock.release()
         print(f"connection {conn_id} closed: {next_chunk_ids}")
 

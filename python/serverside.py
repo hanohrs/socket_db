@@ -80,7 +80,7 @@ def sync_with_db():
             print(
                 f"db synchronized. "
                 f"from: {list(data_from_db.keys())}, "
-                f"conns: {next_chunk_ids}, "
+                f"sent conns: {next_chunk_ids}, "
                 f"clientside_conn_ids: {list(clientside_conn_ids)}"
             )
     finally:
@@ -96,6 +96,7 @@ def handle_connection(conn_id):
             receiving = True
             while sending or receiving:
                 if sending:  # to the server
+                    # print(f"connection {conn_id} writing")
                     lock.acquire()
                     data_from_db_pair = data_from_db.get(conn_id)
                     if data_from_db_pair:
@@ -110,11 +111,12 @@ def handle_connection(conn_id):
                             sending = False
                             print(f"connection {conn_id} write shutdown")
                 if receiving:  # receive from the server
+                    # print(f"connection {conn_id} reading")
                     s.setblocking(False)
                     try:
                         chunk = s.recv(BUFSIZE)
                     except BlockingIOError:
-                        continue
+                        pass
                     else:
                         lock.acquire()
                         down, data = data_to_db.get(conn_id, (False, b""))
@@ -128,13 +130,18 @@ def handle_connection(conn_id):
                 lock.acquire()
                 alive = conn_id in clientside_conn_ids
                 lock.release()
+                # print(f"connection {conn_id} is alive: {alive}")
                 if not alive:
                     break
                 time.sleep(SLEEP_TIME)
     finally:
         lock.acquire()
+        if conn_id in next_chunk_ids:
+            del next_chunk_ids[conn_id]
         if conn_id in data_from_db:
             del data_from_db[conn_id]
+        if conn_id in data_to_db:
+            del data_to_db[conn_id]
         if conn_id in clientside_conn_ids:
             dead_serverside_conn_ids.add(conn_id)
         lock.release()
