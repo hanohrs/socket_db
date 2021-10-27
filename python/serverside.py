@@ -63,7 +63,7 @@ def sync_with_db():
                     cur.execute("DELETE FROM dead_serverside_conn_ids")
                     cur.executemany(
                         "INSERT INTO dead_serverside_conn_ids VALUES (?)",
-                        map(lambda i: (i,), next_chunk_ids.keys())
+                        map(lambda i: (i,), dead_serverside_conn_ids | db_dead_serverside_conn_ids)
                     )
                 # commit
                 con.commit()
