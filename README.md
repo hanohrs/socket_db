@@ -2,7 +2,7 @@
 
 * forward a TCP port over a SQLite3 database
 * a typical use case is connecting two TCP networks that shares a file server
-* not supporting TCP half-open
+* not supporting TCP half-open, keepalive
 * not stable
 
 ## How to use
