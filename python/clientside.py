@@ -5,6 +5,7 @@ import sqlite3
 import threading
 import time
 import traceback
+from datetime import datetime
 
 from constants import *
 
@@ -114,9 +115,11 @@ def get_conn_id():
 def handle_client_socket(client_socket: socket.socket):
     try:
         with client_socket as s:
+            s.settimeout(SLEEP_TIME)
             conn_id = get_conn_id()
             print(f"connection {conn_id} started")
             sending = True
+            send_data_remains = False
             receiving = True
             while sending or receiving:
                 if sending:  # to the client
@@ -129,17 +132,25 @@ def handle_client_socket(client_socket: socket.socket):
                     if data_from_db_pair:
                         down, data = data_from_db_pair
                         if data:
-                            s.sendall(data)
-                        if down:
+                            sent = s.send(data[:BUFSIZE])
+                            send_data_remains = sent != len(data)
+                            if send_data_remains:
+                                lock.acquire()
+                                new_data_from_db_pair = data_from_db.get(conn_id)
+                                if new_data_from_db_pair:
+                                    data_from_db[conn_id] = new_data_from_db_pair[0], new_data_from_db_pair[1][sent:]
+                                else:
+                                    data_from_db[conn_id] = down, data[sent:]
+                                lock.release()
+                        if down and not send_data_remains:
                             s.shutdown(socket.SHUT_WR)
                             sending = False
-                            print(f"connection {conn_id} write shutdown")
+                            print(f"{datetime.now().isoformat()} connection {conn_id} write shutdown")
                 if receiving:  # from the client
                     # print(f"connection {conn_id} reading")
-                    s.setblocking(False)
                     try:
                         chunk = s.recv(BUFSIZE)
-                    except BlockingIOError:
+                    except socket.timeout:  # BlockingIOError:
                         pass
                     else:
                         lock.acquire()
@@ -147,18 +158,17 @@ def handle_client_socket(client_socket: socket.socket):
                         data_to_db[conn_id] = down or not chunk, data + chunk
                         if not chunk:
                             receiving = False
-                            print(f"connection {conn_id} read shutdown")
+                            print(f"{datetime.now().isoformat()} connection {conn_id} read shutdown")
                         lock.release()
-                    finally:
-                        s.setblocking(True)
                 lock.acquire()
                 alive = conn_id not in dead_serverside_conn_ids
                 lock.release()
                 # print(f"connection {conn_id} is alive: {alive}")
-                if not alive:
-                    print(f"connection {conn_id} is dead on the server side")
+                if not send_data_remains and not alive:
+                    print(f"{datetime.now().isoformat()} connection {conn_id} is dead on the server side")
                     break
-                time.sleep(SLEEP_TIME)
+                if not receiving:
+                    time.sleep(SLEEP_TIME)
     finally:
         lock.acquire()
         if conn_id in next_chunk_ids:
@@ -168,7 +178,7 @@ def handle_client_socket(client_socket: socket.socket):
         if conn_id in data_to_db:
             del data_to_db[conn_id]
         lock.release()
-        print(f"connection {conn_id} closed: {next_chunk_ids}")
+        print(f"{datetime.now().isoformat()} connection {conn_id} closed: {next_chunk_ids}")
 
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
