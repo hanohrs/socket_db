@@ -30,17 +30,11 @@ cur.execute("""\
 cur.execute("""\
     CREATE TABLE data (
         conn_id int,
-        direction int REFERENCES directions,
+        direction int,
         chunk_id int,
         chunk_data blob,
         PRIMARY KEY (conn_id, direction, chunk_id)
     )
-""")
-cur.execute("""\
-    INSERT INTO directions
-        VALUES
-            (0, 'to server'),
-            (1, 'to client')
 """)
 con.commit()
 con.close()
