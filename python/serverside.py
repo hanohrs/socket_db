@@ -20,8 +20,7 @@ dead_serverside_conn_ids = set()  # : set[int]
 def sync_with_db():
     print(f"db synchronizing. to: {list(data_to_db.keys())}, dead_svr_conns: {list(dead_serverside_conn_ids)}")
     global data_from_db, next_chunk_ids, clientside_conn_ids
-    lock.acquire()
-    try:
+    with lock:
         with sqlite3.connect(DBNAME, DB_TIMEOUT) as con:
             try:
                 # con.set_trace_callback(print)
@@ -84,8 +83,6 @@ def sync_with_db():
                 f"sent conns: {next_chunk_ids}, "
                 f"clientside_conn_ids: {list(clientside_conn_ids)}"
             )
-    finally:
-        lock.release()
 
 
 def handle_connection(conn_id):
@@ -100,24 +97,23 @@ def handle_connection(conn_id):
             while sending or receiving:
                 if sending:  # to the server
                     # print(f"connection {conn_id} writing")
-                    lock.acquire()
-                    data_from_db_pair = data_from_db.get(conn_id)
-                    if data_from_db_pair:
-                        del data_from_db[conn_id]
-                    lock.release()
+                    with lock:
+                        data_from_db_pair = data_from_db.get(conn_id)
+                        if data_from_db_pair:
+                            del data_from_db[conn_id]
                     if data_from_db_pair:
                         down, data = data_from_db_pair
                         if data:
                             sent = s.send(data[:BUFSIZE])
                             send_data_remains = sent != len(data)
                             if send_data_remains:
-                                lock.acquire()
-                                new_data_from_db_pair = data_from_db.get(conn_id)
-                                if new_data_from_db_pair:
-                                    data_from_db[conn_id] = new_data_from_db_pair[0], new_data_from_db_pair[1][sent:]
-                                else:
-                                    data_from_db[conn_id] = down, data[sent:]
-                                lock.release()
+                                with lock:
+                                    new_data_from_db_pair = data_from_db.get(conn_id)
+                                    if new_data_from_db_pair:
+                                        data_from_db[conn_id] = \
+                                            new_data_from_db_pair[0], new_data_from_db_pair[1][sent:]
+                                    else:
+                                        data_from_db[conn_id] = down, data[sent:]
                                 down = False
                         if down and not send_data_remains:
                             s.shutdown(socket.SHUT_WR)
@@ -130,31 +126,28 @@ def handle_connection(conn_id):
                     except socket.timeout:  # BlockingIOError:
                         pass
                     else:
-                        lock.acquire()
-                        down, data = data_to_db.get(conn_id, (False, b""))
-                        data_to_db[conn_id] = down or not chunk, data + chunk
-                        if not chunk:
-                            receiving = False
-                            print(f"{datetime.now().isoformat()} connection {conn_id} read shutdown")
-                        lock.release()
-                lock.acquire()
-                alive = conn_id in clientside_conn_ids
-                lock.release()
+                        with lock:
+                            down, data = data_to_db.get(conn_id, (False, b""))
+                            data_to_db[conn_id] = down or not chunk, data + chunk
+                            if not chunk:
+                                receiving = False
+                                print(f"{datetime.now().isoformat()} connection {conn_id} read shutdown")
+                with lock:
+                    alive = conn_id in clientside_conn_ids
                 # print(f"connection {conn_id} is alive: {alive}")
                 if not alive:
                     break
                 time.sleep(SLEEP_TIME)
     finally:
-        lock.acquire()
-        if conn_id in next_chunk_ids:
-            del next_chunk_ids[conn_id]
-        if conn_id in data_from_db:
-            del data_from_db[conn_id]
-        if conn_id in data_to_db:
-            del data_to_db[conn_id]
-        if conn_id in clientside_conn_ids:
-            dead_serverside_conn_ids.add(conn_id)
-        lock.release()
+        with lock:
+            if conn_id in next_chunk_ids:
+                del next_chunk_ids[conn_id]
+            if conn_id in data_from_db:
+                del data_from_db[conn_id]
+            if conn_id in data_to_db:
+                del data_to_db[conn_id]
+            if conn_id in clientside_conn_ids:
+                dead_serverside_conn_ids.add(conn_id)
         print(f"{datetime.now().isoformat()} connection {conn_id} closed")
 
 
