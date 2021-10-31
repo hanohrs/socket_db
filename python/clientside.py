@@ -19,7 +19,7 @@ dead_serverside_conn_ids = set()  # : set[int]
 
 
 def sync_with_db():
-    print(f"db synchronizing. to: {list(data_to_db.keys())}")
+    print(f"{datetime.now().isoformat()} db synchronizing. to: {list(data_to_db.keys())}")
     global data_from_db, min_noninserted_conn_id, next_chunk_ids, dead_serverside_conn_ids
     with lock:
         with sqlite3.connect(DBNAME, DB_TIMEOUT) as con:
@@ -84,6 +84,7 @@ def sync_with_db():
                 print(traceback.format_exc())
                 con.rollback()
             print(
+                f"{datetime.now().isoformat()} "
                 f"db synchronized. "
                 f"from: {list(data_from_db.keys())}, "
                 f"conns: {next_chunk_ids}, "
@@ -111,7 +112,7 @@ def handle_client_socket(client_socket: socket.socket):
         with client_socket as s:
             s.settimeout(SLEEP_TIME)
             conn_id = get_conn_id()
-            print(f"connection {conn_id} started")
+            print(f"{datetime.now().isoformat()} connection {conn_id} started")
             sending = True
             send_data_remains = False
             receiving = True
